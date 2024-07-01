@@ -26,6 +26,7 @@ import com.facebook.presto.verifier.framework.QueryConfiguration;
 import com.facebook.presto.verifier.framework.QueryObjectBundle;
 import com.facebook.presto.verifier.framework.VerificationContext;
 import com.facebook.presto.verifier.framework.VerifierConfig;
+import com.facebook.presto.verifier.prestoaction.DefaultClientInfoFactory;
 import com.facebook.presto.verifier.prestoaction.JdbcPrestoAction;
 import com.facebook.presto.verifier.prestoaction.JdbcUrlSelector;
 import com.facebook.presto.verifier.prestoaction.PrestoAction;
@@ -34,6 +35,7 @@ import com.facebook.presto.verifier.prestoaction.PrestoExceptionClassifier;
 import com.facebook.presto.verifier.prestoaction.QueryActionsConfig;
 import com.facebook.presto.verifier.retry.RetryConfig;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import org.intellij.lang.annotations.Language;
 import org.testng.annotations.AfterClass;
@@ -41,6 +43,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static com.facebook.presto.sql.SqlFormatter.formatSql;
@@ -52,6 +55,7 @@ import static com.facebook.presto.verifier.VerifierTestUtil.SCHEMA;
 import static com.facebook.presto.verifier.VerifierTestUtil.createTypeManager;
 import static com.facebook.presto.verifier.VerifierTestUtil.setupPresto;
 import static com.facebook.presto.verifier.framework.ClusterType.CONTROL;
+import static com.facebook.presto.verifier.framework.ClusterType.TEST;
 import static com.facebook.presto.verifier.rewrite.FunctionCallRewriter.FunctionCallSubstitute;
 import static com.facebook.presto.verifier.rewrite.FunctionCallRewriter.validateAndConstructFunctionCallSubstituteMap;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -66,7 +70,13 @@ public class TestQueryRewriter
 {
     private static final String SUITE = "test-suite";
     private static final String NAME = "test-query";
-    private static final QueryConfiguration CONFIGURATION = new QueryConfiguration(CATALOG, SCHEMA, Optional.of("user"), Optional.empty(), Optional.empty());
+    private static final QueryConfiguration CONFIGURATION = new QueryConfiguration(
+            CATALOG,
+            SCHEMA,
+            Optional.of("user"),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty());
     private static final ParsingOptions PARSING_OPTIONS = ParsingOptions.builder().setDecimalLiteralTreatment(AS_DOUBLE).build();
     private static final QueryRewriteConfig QUERY_REWRITE_CONFIG = new QueryRewriteConfig()
             .setTablePrefix("local.tmp")
@@ -96,7 +106,7 @@ public class TestQueryRewriter
                 new QueryActionsConfig().getChecksumTimeout(),
                 new RetryConfig(),
                 new RetryConfig(),
-                new VerifierConfig().setTestId("test"));
+                new DefaultClientInfoFactory(new VerifierConfig().setTestId("test")));
     }
 
     @AfterClass
@@ -228,7 +238,7 @@ public class TestQueryRewriter
     @Test
     public void testRewriteDate()
     {
-        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT date '2020-01-01', date(now()) today", CONTROL);
+        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT date '2020-01-01', date(now()) today", CONFIGURATION, CONTROL);
         assertCreateTableAs(queryBundle.getQuery(), "SELECT\n" +
                 "  CAST(date '2020-01-01' AS timestamp)\n" +
                 ", CAST(date(now()) AS timestamp) today");
@@ -237,7 +247,7 @@ public class TestQueryRewriter
     @Test
     public void testRewriteTime()
     {
-        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT time '12:34:56', time '12:34:56' now", CONTROL);
+        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT time '12:34:56', time '12:34:56' now", CONFIGURATION, CONTROL);
         assertCreateTableAs(queryBundle.getQuery(), "SELECT\n" +
                 "  CAST(time '12:34:56' AS timestamp)\n" +
                 ", CAST(time '12:34:56' AS timestamp) now");
@@ -246,7 +256,7 @@ public class TestQueryRewriter
     @Test
     public void testRewriteTimestampWithTimeZone()
     {
-        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT now(), now() now", CONTROL);
+        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT now(), now() now", CONFIGURATION, CONTROL);
         assertCreateTableAs(queryBundle.getQuery(), "SELECT\n" +
                 "  CAST(now() AS varchar)\n" +
                 ", CAST(now() AS varchar) now");
@@ -255,7 +265,7 @@ public class TestQueryRewriter
     @Test
     public void testRewriteUnknown()
     {
-        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT null, null unknown", CONTROL);
+        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT null, null unknown", CONFIGURATION, CONTROL);
         assertCreateTableAs(queryBundle.getQuery(), "SELECT\n" +
                 "  CAST(null AS bigint)\n" +
                 ", CAST(null AS bigint) unknown");
@@ -264,7 +274,7 @@ public class TestQueryRewriter
     @Test
     public void testRewriteDecimal()
     {
-        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT decimal '1.2', decimal '1.2' d", CONTROL);
+        QueryBundle queryBundle = getQueryRewriter().rewriteQuery("SELECT decimal '1.2', decimal '1.2' d", CONFIGURATION, CONTROL);
         assertCreateTableAs(queryBundle.getQuery(), "SELECT\n" +
                 "  CAST(decimal '1.2' AS double)\n" +
                 ", CAST(decimal '1.2' AS double) d");
@@ -283,7 +293,7 @@ public class TestQueryRewriter
                         "        ]\n" +
                         "    ),\n" +
                         "    ROW(NULL)",
-                CONTROL);
+                CONFIGURATION, CONTROL);
         assertCreateTableAs(
                 queryBundle.getQuery(),
                 "SELECT\n" +
@@ -343,7 +353,7 @@ public class TestQueryRewriter
                         "SELECT\n" +
                                 "    TRIM(ARBITRARY(b))\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    TRIM(MIN(b))\n" +
                         "FROM test_table");
@@ -354,7 +364,7 @@ public class TestQueryRewriter
                         "SELECT\n" +
                                 "    MAP_AGG(a,b)\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    TRANSFORM_VALUES(MULTIMAP_AGG(a,b),(k,v)->ARRAY_MAX(v))\n" +
                         "FROM test_table");
@@ -363,7 +373,7 @@ public class TestQueryRewriter
         assertCreateTableAs(
                 queryRewriter.rewriteQuery(
                         "SELECT RAND()",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT 1");
 
         // Test rewriting with if expression.
@@ -372,7 +382,7 @@ public class TestQueryRewriter
                         "SELECT\n" +
                                 "    ARRAY_AGG(DISTINCT a)\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    IF(TYPEOF(ARBITRARY(DISTINCT a))='integer', ARRAY_SORT(ARRAY_AGG(DISTINCT a)), ARRAY_AGG(DISTINCT a))\n" +
                         "FROM test_table");
@@ -383,7 +393,7 @@ public class TestQueryRewriter
                         "SELECT\n" +
                                 "    TO_UNIXTIME(CURRENT_TIMESTAMP)\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    TO_UNIXTIME(TIMESTAMP '2023-01-01 00:00:00 UTC')\n" +
                         "FROM test_table");
@@ -394,7 +404,7 @@ public class TestQueryRewriter
                         "SELECT\n" +
                                 "    TO_UNIXTIME(NOW())\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    TO_UNIXTIME(DATE_TRUNC('day',NOW()))\n" +
                         "FROM test_table");
@@ -413,7 +423,7 @@ public class TestQueryRewriter
                                 "        1\n" +
                                 ") y\n" +
                                 "    ON (x.b = y.b)",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT *\n" +
                         "FROM test_table x\n" +
                         "JOIN (\n" +
@@ -436,7 +446,7 @@ public class TestQueryRewriter
                                 "        ARBITRARY(a)\n" +
                                 "    FROM test_table\n" +
                                 ")",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT a, b\n" +
                         "FROM test_table\n" +
                         "WHERE a IN (\n" +
@@ -454,7 +464,7 @@ public class TestQueryRewriter
                                 "        APPROX_DISTINCT(b) AS num\n" +
                                 "    FROM test_table\n" +
                                 ") x",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT num\n" +
                         "FROM (\n" +
                         "    SELECT\n" +
@@ -472,7 +482,7 @@ public class TestQueryRewriter
                                 ")\n" +
                                 "SELECT\n" +
                                 "    a\n" +
-                                "FROM x", CONTROL).getQuery(),
+                                "FROM x", CONFIGURATION, CONTROL).getQuery(),
                 "WITH x AS (\n" +
                         "    SELECT\n" +
                         "        MAX(a) AS a\n" +
@@ -498,7 +508,7 @@ public class TestQueryRewriter
                                 "       MIN_BY(a, b) AS a\n" +
                                 "    FROM test_table\n" +
                                 ") x",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    MIN(a)\n" +
                         "FROM (\n" +
@@ -521,7 +531,7 @@ public class TestQueryRewriter
                                 "        PARTITION BY b\n" +
                                 "    )\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    IF(\n" +
                         "        MIN(a) OVER (\n" +
@@ -548,7 +558,7 @@ public class TestQueryRewriter
                                 "        ORDER BY b DESC\n" +
                                 "    )\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    ROW_NUMBER() OVER (\n" +
                         "        PARTITION BY b\n" +
@@ -563,11 +573,32 @@ public class TestQueryRewriter
                                 "    APPROX_PERCENTILE(a, 0.95),\n" +
                                 "    APPROX_PERCENTILE(a, ARRAY[0.5, 0.9])\n" +
                                 "FROM test_table",
-                        CONTROL).getQuery(),
+                        CONFIGURATION, CONTROL).getQuery(),
                 "SELECT\n" +
                         "    AVG(a),\n" +
                         "    REPEAT(AVG(a), CAST(CARDINALITY(ARRAY[0.5, 0.9]) AS INTEGER))\n" +
                         "FROM test_table");
+    }
+
+    @Test
+    public void testReuseTableRewrite()
+    {
+        String query = "INSERT INTO dest_table SELECT * FROM test_table";
+        QueryConfiguration configuration = new QueryConfiguration(
+                CATALOG,
+                SCHEMA,
+                Optional.of("user"),
+                Optional.empty(),
+                Optional.empty(),
+                true);
+        assertShadowed(
+                getQueryRewriter(new QueryRewriteConfig().setReuseTable(true), VERIFIER_CONFIG),
+                query,
+                "local.tmp",
+                ImmutableMap.of(TEST, configuration, CONTROL, configuration),
+                ImmutableList.of(),
+                query,
+                ImmutableList.of());
     }
 
     private void assertShadowed(
@@ -578,11 +609,25 @@ public class TestQueryRewriter
             @Language("SQL") String expectedTemplates,
             List<String> expectedTeardownTemplates)
     {
+        assertShadowed(queryRewriter, query, prefix, ImmutableMap.of(CONTROL, CONFIGURATION, TEST, CONFIGURATION), expectedSetupTemplates, expectedTemplates, expectedTeardownTemplates);
+    }
+
+    private void assertShadowed(
+            QueryRewriter queryRewriter,
+            @Language("SQL") String query,
+            String prefix,
+            Map<ClusterType, QueryConfiguration> queryConfigurations,
+            List<String> expectedSetupTemplates,
+            @Language("SQL") String expectedTemplates,
+            List<String> expectedTeardownTemplates)
+    {
         for (ClusterType cluster : ClusterType.values()) {
-            QueryObjectBundle bundle = queryRewriter.rewriteQuery(query, cluster);
+            QueryObjectBundle bundle = queryRewriter.rewriteQuery(query, queryConfigurations.get(cluster), cluster, true);
 
             String tableName = bundle.getObjectName().toString();
-            assertTrue(tableName.startsWith(prefix + "_"));
+            if (!bundle.isReuseTable()) {
+                assertTrue(tableName.startsWith(prefix + "_"));
+            }
 
             assertStatements(bundle.getSetupQueries(), templateToStatements(expectedSetupTemplates, tableName));
             assertStatements(ImmutableList.of(bundle.getQuery()), templateToStatements(ImmutableList.of(expectedTemplates), tableName));
@@ -592,7 +637,7 @@ public class TestQueryRewriter
 
     private static void assertTableName(QueryRewriter queryRewriter, @Language("SQL") String query, String expectedPrefix)
     {
-        QueryObjectBundle bundle = queryRewriter.rewriteQuery(query, CONTROL);
+        QueryObjectBundle bundle = queryRewriter.rewriteQuery(query, CONFIGURATION, CONTROL);
         assertTrue(bundle.getObjectName().toString().startsWith(expectedPrefix));
     }
 
